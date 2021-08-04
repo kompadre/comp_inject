@@ -1,10 +1,9 @@
 <?php
-
-include 'test2.php';
+// include 'test2.php';
 comp_inject_start(
-	"echo '/*# ' . __FILE__ . ':0 */' . PHP_EOL;", 
-	"echo '/*# ' . __FILE__ . ':$ */' . PHP_EOL;"
+	' 1+1 ',
+	" "
 );
 include 'test2.php';
 comp_inject_stop();
-include 'test2.php';
+// include 'test2.php';
