@@ -18,8 +18,19 @@
 static zend_op_array *ci_compile_file(zend_file_handle *file_handle, int type);
 zend_op_array *(*original_compile_file)(zend_file_handle *file_handle, int type);
 
-zval inject_start;
-zval inject_end;
+ZEND_BEGIN_MODULE_GLOBALS(comp_inject)
+    zval inject_start;
+    zval inject_end;
+ZEND_END_MODULE_GLOBALS(comp_inject)
+
+ZEND_DECLARE_MODULE_GLOBALS(comp_inject)
+
+
+#ifdef ZTS
+#define COMPI_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(comp_inject, v)
+#else
+#define COMPI_G(v) (comp_inject_globals.v)
+#endif
 
 static zend_op_array *ci_compile_file(zend_file_handle *file_handle, int type) /* {{{ */
 {
@@ -27,21 +38,35 @@ static zend_op_array *ci_compile_file(zend_file_handle *file_handle, int type) /
     zval pv;
     zval retval;                                 /* return value */
 
-    if (Z_TYPE_INFO(inject_start) == IS_STRING) {
-        op_array = zend_compile_string( &inject_start, (char *)file_handle->filename);
-        zend_execute(op_array, &retval);
-        destroy_op_array(op_array);
-        efree_size(op_array, sizeof(zend_op_array));
+    
+    if (!file_handle) {
+        return original_compile_file(file_handle, type);
+    }
+
+    zend_first_try {
+
+    if (Z_TYPE_INFO(COMPI_G(inject_start)) == IS_STRING) {
+            op_array = zend_compile_string( &COMPI_G(inject_start), (char *)file_handle->filename);
+            if (op_array) {
+                zend_execute(op_array, &retval);
+                destroy_op_array(op_array);
+                efree_size(op_array, sizeof(zend_op_array));
+            }
     }
 
     op_array = original_compile_file(file_handle, type);
 
-    if (Z_TYPE_INFO(inject_end) == IS_STRING) {
-        zend_execute(op_array, &retval);
-        destroy_op_array(op_array);
-        efree_size(op_array, sizeof(zend_op_array));
-        op_array = zend_compile_string( &inject_end, (char *)file_handle->filename);
+    if (Z_TYPE_INFO(COMPI_G(inject_end)) == IS_STRING) {
+        if (op_array) {
+            zend_execute(op_array, &retval);
+            destroy_op_array(op_array);
+            efree_size(op_array, sizeof(zend_op_array));
+        }
+       op_array = zend_compile_string( &COMPI_G(inject_end), (char *)file_handle->filename);
     }
+
+    } zend_end_try();
+
     return op_array;
 }
 
@@ -69,14 +94,16 @@ PHP_FUNCTION(comp_inject_start)
 	ZEND_PARSE_PARAMETERS_END();
 
 	if (start_len > 0) {
-	    Z_STR(inject_start) = zend_string_alloc(start_len, 0);
-	    memcpy(Z_STRVAL(inject_start), start, start_len);
-	    Z_TYPE_INFO(inject_start) = IS_STRING;
+	    // Z_STR(COMPI_G(inject_start)) = zend_string_alloc(start_len, 0);
+	    memcpy(Z_STRVAL(COMPI_G(inject_start)), start, start_len);
+        // Z_STRVAL(COMPI_G(inject_start))[start_len] = '\0';
+	    Z_TYPE_INFO(COMPI_G(inject_start)) = IS_STRING;
 	}
 	if (end_len > 0) {
-	    Z_STR(inject_end) = zend_string_alloc(end_len, 0);
-	    memcpy(Z_STRVAL(inject_end), end, end_len);
-	    Z_TYPE_INFO(inject_end) = IS_STRING;
+	    // Z_STR(COMPI_G(inject_end)) = zend_string_alloc(end_len, 0);
+	    memcpy(Z_STRVAL(COMPI_G(inject_end)), end, end_len);
+        Z_STRVAL(COMPI_G(inject_end))[start_len] = '\0';
+	    Z_TYPE_INFO(COMPI_G(inject_end)) = IS_STRING;
 	}
 
     original_compile_file = zend_compile_file;
@@ -131,6 +158,15 @@ static const zend_function_entry comp_inject_functions[] = {
 };
 /* }}} */
 
+
+PHP_GINIT_FUNCTION(comp_inject)
+{
+    Z_STR(comp_inject_globals->inject_start) = zend_string_alloc(1024, 0);
+    memset(Z_STR(comp_inject_globals->inject_start), 0, 1024);
+    Z_STR(comp_inject_globals->inject_end)   = zend_string_alloc(1024, 0);
+    memset(Z_STR(comp_inject_globals->inject_end), 0, 1024);
+}
+
 /* {{{ comp_inject_module_entry
  */
 zend_module_entry comp_inject_module_entry = {
@@ -143,7 +179,11 @@ zend_module_entry comp_inject_module_entry = {
 	NULL,							/* PHP_RSHUTDOWN - Request shutdown */
 	PHP_MINFO(comp_inject),			/* PHP_MINFO - Module info */
 	PHP_COMP_INJECT_VERSION,		/* Version */
-	STANDARD_MODULE_PROPERTIES
+    PHP_MODULE_GLOBALS(comp_inject),
+    PHP_GINIT(comp_inject),
+    NULL,
+    NULL,
+	STANDARD_MODULE_PROPERTIES_EX
 };
 /* }}} */
 
